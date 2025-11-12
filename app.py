@@ -248,6 +248,11 @@ dynamic_table("9️⃣ Control Data & Validation Sources",
 # ------------------------------------------------------------
 if st.button("📤 Submit & Email BRD"):
     with st.spinner("Generating BRD and sending email…"):
+        
+        # Create clean filename
+        safe_project_name = project_name.replace(" ", "_").replace("/", "_")
+        brd_filename = f"{safe_project_name}_BRD.docx"
+        
         form_inputs = {
             "project_name": project_name,
             "requested_by": requested_by,
@@ -275,10 +280,10 @@ if st.button("📤 Submit & Email BRD"):
 
         # Build attachments array for email
         email_attachments = [
-            {"filename": "BRD.docx", "data": brd_docx.getvalue()}
+            {"filename": brd_filename, "data": brd_docx.getvalue()}
         ]
 
-        # Add uploaded files
+        # Include user-uploaded files
         for f in attachments or []:
             email_attachments.append({"filename": f.name, "data": f.getvalue()})
 
@@ -289,6 +294,9 @@ if st.button("📤 Submit & Email BRD"):
             attachments=email_attachments
         )
 
-        st.success("📧 Email sent successfully!")
+        # SUCCESS MESSAGE FOR THE USER
+        st.success("✅ BRD Submitted – Reach out to himanshu.jadaun@dish.com for any questions")
+
+        # Reset everything
         st.session_state.clear()
         st.rerun()
