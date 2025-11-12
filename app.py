@@ -294,9 +294,21 @@ if st.button("📤 Submit & Email BRD"):
             attachments=email_attachments
         )
 
-        # SUCCESS MESSAGE FOR THE USER
-        st.success("✅ BRD Submitted – Reach out to himanshu.jadaun@dish.com for any questions")
+        # Store success message flag
+        st.session_state["submitted"] = True
 
-        # Reset everything
-        st.session_state.clear()
-        st.rerun()
+
+# ------------------------------------------------------------
+# Show permanent success message (until cleared)
+# ------------------------------------------------------------
+if st.session_state.get("submitted", False):
+    st.success("✅ BRD Submitted – Reach out to himanshu.jadaun@dish.com for any questions")
+
+
+# ------------------------------------------------------------
+# Clear Form Button
+# ------------------------------------------------------------
+if st.button("🧹 Clear Form"):
+    st.session_state.clear()
+    st.rerun()
+
