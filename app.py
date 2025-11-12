@@ -3,65 +3,103 @@ import openai
 from docx import Document
 from datetime import date
 import io
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
+
 
 # ------------------------------------------------------------
 # SETUP
 # ------------------------------------------------------------
 st.set_page_config(page_title="Boost Mobile BRD Generator", layout="wide")
 
+# Validate OpenAI key
 if "openai_api_key" not in st.secrets:
-    st.error("🚨 Missing OpenAI API Key. Please add it in Streamlit → Settings → Secrets.")
+    st.error("🚨 Missing OpenAI API Key. Add it in Streamlit → Settings → Secrets.")
     st.stop()
 
 openai.api_key = st.secrets["openai_api_key"]
 
 
 # ------------------------------------------------------------
-# Dynamic Table Helper
+# SMTP EMAIL SENDER
+# ------------------------------------------------------------
+def send_email(subject, body, attachments):
+    smtp_server = st.secrets["smtp_server"]
+    smtp_port = int(st.secrets["smtp_port"])
+    sender_email = st.secrets["sender_email"]
+    sender_password = st.secrets["sender_password"]
+    receiver_email = st.secrets["receiver_email"]
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
+    msg["Subject"] = subject
+
+    msg.attach(MIMEText(body, "plain"))
+
+    # Add attachments
+    for file in attachments:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(file["data"])
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition",
+            f"attachment; filename= {file['filename']}",
+        )
+        msg.attach(part)
+
+    # Send email
+    server = smtplib.SMTP(smtp_server, smtp_port)
+    server.starttls()
+    server.login(sender_email, sender_password)
+    server.sendmail(sender_email, receiver_email, msg.as_string())
+    server.quit()
+
+
+# ------------------------------------------------------------
+# Dynamic Row Table Builder
 # ------------------------------------------------------------
 def dynamic_table(label, columns, session_key):
     st.subheader(label)
 
-    # Initialize session state table
     if session_key not in st.session_state:
         st.session_state[session_key] = [dict.fromkeys(columns, "")]
 
     rows = st.session_state[session_key]
 
-    # Display existing rows
     for idx, row in enumerate(rows):
-        st.markdown(f"**Row {idx + 1}**")
+        st.markdown(f"**Entry {idx + 1}**")
         cols_ui = st.columns(len(columns))
 
         for i, col_name in enumerate(columns):
             row[col_name] = cols_ui[i].text_input(
-                f"{col_name} (Row {idx+1})",
+                f"{col_name}",
                 value=row[col_name],
                 key=f"{session_key}_{col_name}_{idx}"
             )
 
         st.divider()
 
-    # Add row button
     if st.button(f"➕ Add Row to {label}"):
         rows.append(dict.fromkeys(columns, ""))
 
 
 # ------------------------------------------------------------
-# Word Document Creator
+# Create Word BRD Document
 # ------------------------------------------------------------
 def create_brd_docx(form_inputs):
     doc = Document()
 
-    # Header
     doc.add_heading("Business Requirements Document (Dashboard Request)", level=1)
 
     doc.add_paragraph(f"Project / Dashboard Name: {form_inputs['project_name']}")
     doc.add_paragraph(f"Date Created: {form_inputs['date_created']}")
     doc.add_paragraph(f"Requested By (Business Team): {form_inputs['requested_by']}")
     doc.add_paragraph(f"Prepared By (Analyst): {form_inputs['prepared_by']}")
-    doc.add_paragraph(f"Version: {form_inputs['version']}")
-    doc.add_paragraph("")
+    doc.add_paragraph(f"Version: {form_inputs['version']}\n")
 
     # 1️⃣ Business Overview
     doc.add_heading("1️⃣ Business Overview", level=2)
@@ -81,7 +119,7 @@ def create_brd_docx(form_inputs):
     doc.add_paragraph(form_inputs["frequency"])
 
     # ------------------------------------------------------------
-    # TABLES (Stakeholders, Data Inputs, etc.)
+    # Helper to add tables
     # ------------------------------------------------------------
     def add_table(title, columns, rows):
         doc.add_heading(title, level=2)
@@ -95,6 +133,7 @@ def create_brd_docx(form_inputs):
             for i, col in enumerate(columns):
                 cells[i].text = row[col] if row[col] else ""
 
+    # 2-7 tables
     add_table("2️⃣ Key Stakeholders",
               ["Role", "Name", "Department / Notes"],
               form_inputs["stakeholders"])
@@ -104,7 +143,8 @@ def create_brd_docx(form_inputs):
               form_inputs["data_inputs"])
 
     add_table("4️⃣ Dashboard Requirements",
-              ["Dashboard Section", "Description / Purpose", "Key Metrics / Fields", "Filters Required", "Drilldown Needed?"],
+              ["Dashboard Section", "Description / Purpose", "Key Metrics / Fields",
+               "Filters Required", "Drilldown Needed?"],
               form_inputs["dash_reqs"])
 
     add_table("5️⃣ Business Rules / Calculations",
@@ -119,12 +159,19 @@ def create_brd_docx(form_inputs):
               ["Step", "Responsible", "Criteria", "Status"],
               form_inputs["validation"])
 
-    # 8️⃣ Notes
-    doc.add_heading("8️⃣ Notes / Attachments", level=2)
+    # 8️⃣ Notes & Attachments
+    doc.add_heading("8️⃣ Notes & Attachments", level=2)
     doc.add_paragraph(form_inputs["notes"])
 
+    # Add images inline if any
+    for file in form_inputs["attachments"]:
+        if file.type.startswith("image/"):
+            doc.add_picture(file, width=None)
+
+    # 9️⃣ Control Data
     add_table("9️⃣ Control Data & Validation Sources",
-              ["Control Report / Source", "Description / Purpose", "Business Owner", "Validation Method", "Frequency"],
+              ["Control Report / Source", "Description / Purpose",
+               "Business Owner", "Validation Method", "Frequency"],
               form_inputs["control_data"])
 
     buffer = io.BytesIO()
@@ -133,18 +180,18 @@ def create_brd_docx(form_inputs):
     return buffer
 
 
+
 # ------------------------------------------------------------
 # STREAMLIT UI
 # ------------------------------------------------------------
 st.title("📊 Boost Mobile BRD Generator")
-st.markdown("Generate a BRD identical to your team's official template.")
 
 # BASIC INFO
 project_name = st.text_input("Project Name")
 requested_by = st.text_input("Requested By (Business Team)")
 prepared_by = st.text_input("Prepared By (Analyst)")
-version = st.text_input("Version", value="1.0")
-date_created = st.date_input("Date Created", value=date.today())
+version = st.text_input("Version", "1.0")
+date_created = st.date_input("Date Created", date.today())
 
 # 1️⃣ Business Overview
 st.subheader("1️⃣ Business Overview")
@@ -154,9 +201,7 @@ in_scope = st.text_area("In Scope")
 out_of_scope = st.text_area("Out of Scope")
 frequency = st.selectbox("Expected Frequency", ["Daily", "Weekly", "Monthly", "Ad hoc"])
 
-# ------------------------------------------------------------
-# Dynamic Tables
-# ------------------------------------------------------------
+# Tables
 dynamic_table("2️⃣ Key Stakeholders",
               ["Role", "Name", "Department / Notes"],
               "stakeholders")
@@ -166,7 +211,8 @@ dynamic_table("3️⃣ Data Inputs",
               "data_inputs")
 
 dynamic_table("4️⃣ Dashboard Requirements",
-              ["Dashboard Section", "Description / Purpose", "Key Metrics / Fields", "Filters Required", "Drilldown Needed?"],
+              ["Dashboard Section", "Description / Purpose",
+               "Key Metrics / Fields", "Filters Required", "Drilldown Needed?"],
               "dash_reqs")
 
 dynamic_table("5️⃣ Business Rules / Calculations",
@@ -181,17 +227,27 @@ dynamic_table("7️⃣ Validation & Sign-off",
               ["Step", "Responsible", "Criteria", "Status"],
               "validation")
 
+# 8️⃣ Notes & Attachments
+st.subheader("8️⃣ Notes & Attachments")
+notes = st.text_area("Notes")
+attachments = st.file_uploader(
+    "Upload attachments (any file type)",
+    accept_multiple_files=True,
+    type=None
+)
+
+# 9️⃣ Control Data
 dynamic_table("9️⃣ Control Data & Validation Sources",
-              ["Control Report / Source", "Description / Purpose", "Business Owner", "Validation Method", "Frequency"],
+              ["Control Report / Source", "Description / Purpose",
+               "Business Owner", "Validation Method", "Frequency"],
               "control_data")
 
-notes = st.text_area("8️⃣ Notes / Attachments")
 
 # ------------------------------------------------------------
-# Generate BRD Button
+# Submit → Generate BRD & Email It
 # ------------------------------------------------------------
-if st.button("Generate BRD (.docx)"):
-    with st.spinner("Creating BRD Document…"):
+if st.button("📤 Submit & Email BRD"):
+    with st.spinner("Generating BRD and sending email…"):
         form_inputs = {
             "project_name": project_name,
             "requested_by": requested_by,
@@ -211,19 +267,28 @@ if st.button("Generate BRD (.docx)"):
             "validation": st.session_state["validation"],
             "control_data": st.session_state["control_data"],
             "notes": notes,
+            "attachments": attachments or [],
         }
 
-        buffer = create_brd_docx(form_inputs)
+        # Generate BRD Docx
+        brd_docx = create_brd_docx(form_inputs)
 
-        st.success("🎉 BRD Created Successfully!")
-        st.download_button(
-            label="📥 Download BRD Document",
-            data=buffer,
-            file_name="BRD.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        # Build attachments array for email
+        email_attachments = [
+            {"filename": "BRD.docx", "data": brd_docx.getvalue()}
+        ]
+
+        # Add uploaded files
+        for f in attachments or []:
+            email_attachments.append({"filename": f.name, "data": f.getvalue()})
+
+        # Send email
+        send_email(
+            subject=f"New BRD Submission: {project_name}",
+            body=f"A new BRD has been submitted.\n\nProject: {project_name}",
+            attachments=email_attachments
         )
 
-        # Auto-reset form
+        st.success("📧 Email sent successfully!")
         st.session_state.clear()
-        st.rerun()      # <--- Updated here
-
+        st.rerun()
