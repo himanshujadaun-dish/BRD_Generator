@@ -225,4 +225,5 @@ if st.button("Generate BRD (.docx)"):
 
         # Auto-reset form
         st.session_state.clear()
-        st.experimental_rerun()
+        st.rerun()      # <--- Updated here
+
